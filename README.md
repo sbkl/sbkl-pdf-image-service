@@ -83,11 +83,12 @@ The service returns per-image error codes, so failures are actionable:
 
 The service renders each page once and crops from that rendered page:
 
-- `RENDER_TARGET_WIDTH` controls output detail (default `1800`)
-- `MAX_RENDER_SCALE` caps upscaling factor (default `3`)
+- `RENDER_TARGET_WIDTH` controls output detail (default `1400`)
+- `MAX_RENDER_SCALE` caps upscaling factor (default `2`)
 - `CROP_MARGIN_PX` adds a white border around each crop (default `20`)
+- `MAX_PAGE_PIXELS` bounds compute and may automatically reduce scale for large pages
 
-To emulate the previous client-side pipeline more closely, keep `CROP_MARGIN_PX=20` and tune `RENDER_TARGET_WIDTH` between `1200` and `2200`.
+For a balanced quality/performance profile, start with `RENDER_TARGET_WIDTH=1400`, `MAX_RENDER_SCALE=2`, and `MAX_PAGE_PIXELS=20000000`.
 
 ## Reliability / Guardrails
 

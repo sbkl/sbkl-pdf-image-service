@@ -109,9 +109,17 @@ export async function renderPage(args: {
 
   const page = await args.pdf.getPage(args.pageIndex + 1);
   const baseViewport = page.getViewport({ scale: 1 });
+  const basePixels = baseViewport.width * baseViewport.height;
+
+  if (basePixels > args.maxPagePixels) {
+    throw new Error(
+      `Rendered page exceeds max pixels even at scale=1: ${Math.ceil(baseViewport.width)}x${Math.ceil(baseViewport.height)} > ${args.maxPagePixels}`,
+    );
+  }
 
   const requestedScale = args.targetWidth / baseViewport.width;
-  const scale = Math.min(args.maxScale, Math.max(1, requestedScale));
+  const maxScaleByPixels = Math.sqrt(args.maxPagePixels / basePixels);
+  const scale = Math.min(args.maxScale, Math.max(1, requestedScale), maxScaleByPixels);
   const viewport = page.getViewport({ scale });
 
   const width = Math.max(1, Math.ceil(viewport.width));

@@ -64,7 +64,11 @@ processDocumentImagesRouter.post("/process-document-images", async (c) => {
 
   const startTime = Date.now();
   const elapsedMs = () => Date.now() - startTime;
-  const deadlineExceeded = () => elapsedMs() >= config.REQUEST_DEADLINE_MS;
+  const remainingBudgetMs = () =>
+    Math.max(0, config.REQUEST_DEADLINE_MS - elapsedMs());
+  const deadlineExceeded = () => remainingBudgetMs() <= 0;
+  const boundedTimeoutMs = (requestedTimeoutMs: number) =>
+    Math.max(1, Math.min(requestedTimeoutMs, remainingBudgetMs()));
 
   const results: ProcessDocumentImagesResponse["results"] = [];
 
@@ -79,19 +83,25 @@ processDocumentImagesRouter.post("/process-document-images", async (c) => {
   }
 
   let pdf;
+  const pdfFetchTimeoutMs = boundedTimeoutMs(config.PDF_FETCH_TIMEOUT_MS);
   try {
     pdf = await loadPdfFromUrl({
       url: request.file.url,
-      timeoutMs: config.PDF_FETCH_TIMEOUT_MS,
+      timeoutMs: pdfFetchTimeoutMs,
       maxPdfBytes: config.MAX_PDF_BYTES,
     });
   } catch (error) {
-    const errorMessage = `stage=pdf_fetch elapsedMs=${elapsedMs()} ${normalizeErrorMessage(error)}`;
+    const errorCode: ImageFailureCode = deadlineExceeded()
+      ? "REQUEST_DEADLINE_EXCEEDED"
+      : "PDF_FETCH_FAILED";
+    const errorMessage =
+      `stage=pdf_fetch elapsedMs=${elapsedMs()} timeoutMs=${pdfFetchTimeoutMs} ` +
+      `${normalizeErrorMessage(error)}`;
     for (const image of request.images) {
       results.push(
         toFailureResult({
           documentSectionImageId: image.documentSectionImageId,
-          errorCode: "PDF_FETCH_FAILED",
+          errorCode,
           errorMessage,
         }),
       );
@@ -130,23 +140,30 @@ processDocumentImagesRouter.post("/process-document-images", async (c) => {
       }
 
       let renderedPage;
+      let pageRenderTimeoutMs = config.PAGE_RENDER_TIMEOUT_MS;
       try {
+        pageRenderTimeoutMs = boundedTimeoutMs(config.PAGE_RENDER_TIMEOUT_MS);
         renderedPage = await renderPage({
           pdf,
           pageIndex,
           targetWidth: config.RENDER_TARGET_WIDTH,
           maxScale: config.MAX_RENDER_SCALE,
-          pageRenderTimeoutMs: config.PAGE_RENDER_TIMEOUT_MS,
+          pageRenderTimeoutMs,
           maxPagePixels: config.MAX_PAGE_PIXELS,
         });
       } catch (error) {
+        const errorCode: ImageFailureCode = deadlineExceeded()
+          ? "REQUEST_DEADLINE_EXCEEDED"
+          : "PAGE_RENDER_FAILED";
         const errorMessage =
-          `stage=page_render elapsedMs=${elapsedMs()} pageIndex=${pageIndex} ${normalizeErrorMessage(error)}`;
+          `stage=page_render elapsedMs=${elapsedMs()} pageIndex=${pageIndex} ` +
+          `timeoutMs=${pageRenderTimeoutMs} ` +
+          `${normalizeErrorMessage(error)}`;
         for (const image of images) {
           results.push(
             toFailureResult({
               documentSectionImageId: image.documentSectionImageId,
-              errorCode: "PAGE_RENDER_FAILED",
+              errorCode,
               errorMessage,
             }),
           );
