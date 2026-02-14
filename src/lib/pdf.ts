@@ -1,6 +1,7 @@
 import {
   createCanvas,
   DOMMatrix,
+  Image,
   ImageData,
   type Canvas,
   type CanvasRenderingContext2D,
@@ -13,11 +14,15 @@ import {
 
 const globalRef = globalThis as {
   DOMMatrix?: typeof DOMMatrix;
+  Image?: typeof Image;
   ImageData?: typeof ImageData;
 };
 
 if (!globalRef.DOMMatrix) {
   globalRef.DOMMatrix = DOMMatrix;
+}
+if (!globalRef.Image) {
+  globalRef.Image = Image;
 }
 if (!globalRef.ImageData) {
   globalRef.ImageData = ImageData;
@@ -66,16 +71,19 @@ function renderPageWithTimeout(args: {
   canvasContext: CanvasRenderingContext2D;
   viewport: ReturnType<PDFPageProxy["getViewport"]>;
   timeoutMs: number;
+  intent?: "display" | "print";
 }) {
+  const renderTask = args.page.render({
+    canvasContext: args.canvasContext as any,
+    viewport: args.viewport,
+    intent: args.intent,
+  } as any);
+
   return Promise.race([
-    args.page
-      .render({
-        canvasContext: args.canvasContext as any,
-        viewport: args.viewport,
-      } as any)
-      .promise,
+    renderTask.promise,
     new Promise<never>((_, reject) => {
       setTimeout(() => {
+        renderTask.cancel();
         reject(new Error(`Page render timeout after ${args.timeoutMs}ms`));
       }, args.timeoutMs);
     }),
@@ -111,19 +119,45 @@ export async function renderPageAtScaleOne(args: {
   }
 
   const canvas = createCanvas(width, height);
-  const context = canvas.getContext("2d");
+  let context = canvas.getContext("2d");
 
-  await renderPageWithTimeout({
-    page,
-    canvasContext: context,
-    viewport,
-    timeoutMs: args.pageRenderTimeoutMs,
-  });
+  try {
+    await renderPageWithTimeout({
+      page,
+      canvasContext: context,
+      viewport,
+      timeoutMs: args.pageRenderTimeoutMs,
+      intent: "display",
+    });
 
-  return {
-    canvas,
-    context,
-    width,
-    height,
-  };
+    return {
+      canvas,
+      context,
+      width,
+      height,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes("Image or Canvas expected")) {
+      throw error;
+    }
+
+    // Fallback for node-canvas drawImage type mismatches in some PDFs.
+    const retryCanvas = createCanvas(width, height);
+    context = retryCanvas.getContext("2d");
+    await renderPageWithTimeout({
+      page,
+      canvasContext: context,
+      viewport,
+      timeoutMs: args.pageRenderTimeoutMs,
+      intent: "print",
+    });
+
+    return {
+      canvas: retryCanvas,
+      context,
+      width,
+      height,
+    };
+  }
 }
