@@ -53,7 +53,12 @@ processDocumentImagesRouter.post("/process-document-images", async (c) => {
     throw new HTTPException(401, { message: "Unauthorized" });
   }
 
-  const body = await c.req.json();
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    throw new HTTPException(400, { message: "Invalid JSON payload" });
+  }
   const request = processDocumentImagesRequestSchema.parse(body);
 
   if (request.images.length > config.MAX_IMAGES_PER_REQUEST) {
@@ -319,6 +324,10 @@ processDocumentImagesRouter.onError((error, c) => {
   }
 
   const message = normalizeErrorMessage(error);
+  console.error("process-document-images error", {
+    message,
+    stack: error instanceof Error ? error.stack : undefined,
+  });
 
   const status =
     error instanceof Error &&
