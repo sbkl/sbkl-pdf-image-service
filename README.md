@@ -102,16 +102,16 @@ To prevent opaque platform timeouts, the service can fail early with explicit er
 ## Local Development
 
 ```bash
-npm install
+bun install
 cp .env.example .env
-npm run dev
+bun run dev
 ```
 
 ## Tests
 
 ```bash
 bun test
-npm run typecheck
+bun run typecheck
 ```
 
 ## Railway
