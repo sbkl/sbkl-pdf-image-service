@@ -10,14 +10,13 @@ app.use("*", logger());
 app.get("/health", (c) => c.json({ status: "ok" }, 200));
 app.route("/v1", processDocumentImagesRouter);
 
+export { app };
+
 if (import.meta.main) {
   Bun.serve({
     port: config.PORT,
     fetch: app.fetch,
-    reusePort: true,
   });
 
   console.info(`sbkl-pdf-image-service listening on :${config.PORT}`);
 }
-
-export default app;

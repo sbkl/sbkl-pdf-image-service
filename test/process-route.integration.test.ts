@@ -7,7 +7,7 @@ process.env.MAX_IMAGES_PER_REQUEST = "20";
 process.env.MAX_PDF_BYTES = String(20 * 1024 * 1024);
 process.env.PDF_FETCH_TIMEOUT_MS = "5000";
 
-const { default: app } = await import("../src/index");
+const { app } = await import("../src/index");
 
 async function createFixturePdf() {
   const pdfDoc = await PDFDocument.create();
