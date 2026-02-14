@@ -31,6 +31,7 @@ processDocumentImagesRouter.post("/process-document-images", async (c) => {
   let body: unknown;
   try {
     body = await c.req.json();
+    console.log("body", body);
   } catch {
     throw new HTTPException(400, { message: "Invalid JSON payload" });
   }
@@ -61,6 +62,7 @@ processDocumentImagesRouter.post("/process-document-images", async (c) => {
       timeoutMs: config.PDF_FETCH_TIMEOUT_MS,
       maxPdfBytes: config.MAX_PDF_BYTES,
     });
+    console.log("pdf", pdf);
   } catch (error) {
     const errorMessage = normalizeErrorMessage(error);
     for (const image of request.images) {
@@ -89,6 +91,7 @@ processDocumentImagesRouter.post("/process-document-images", async (c) => {
       let renderedPage;
       try {
         renderedPage = await renderPageAtScaleOne({ pdf, pageIndex });
+        console.log("renderedPage", renderedPage);
       } catch (error) {
         const errorMessage = normalizeErrorMessage(error);
         for (const image of images) {
@@ -145,6 +148,7 @@ processDocumentImagesRouter.post("/process-document-images", async (c) => {
             errorMessage: null,
           });
         } catch (error) {
+          console.log("error", error);
           results.push({
             documentSectionImageId: image.documentSectionImageId,
             status: "failed",
@@ -189,7 +193,9 @@ processDocumentImagesRouter.onError((error, c) => {
 
   const status =
     error instanceof Error &&
-    retryableStatusCodes.has(Number((error as Error & { status?: number }).status))
+    retryableStatusCodes.has(
+      Number((error as Error & { status?: number }).status),
+    )
       ? 503
       : 500;
 
