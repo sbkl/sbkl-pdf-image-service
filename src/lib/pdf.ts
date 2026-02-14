@@ -6,11 +6,7 @@ import {
   type Canvas,
   type SKRSContext2D,
 } from "@napi-rs/canvas";
-import {
-  getDocument,
-  type PDFDocumentProxy,
-  type PDFPageProxy,
-} from "pdfjs-dist/legacy/build/pdf.mjs";
+import { getDocument, type PDFDocumentProxy } from "pdfjs-dist/legacy/build/pdf.mjs";
 
 const globalRef = globalThis as {
   DOMMatrix?: typeof DOMMatrix;
@@ -66,40 +62,14 @@ export async function loadPdfFromUrl(args: {
   } as any).promise;
 }
 
-export function renderPageWithTimeout(args: {
-  page: PDFPageProxy;
-  canvasContext: SKRSContext2D;
-  viewport: ReturnType<PDFPageProxy["getViewport"]>;
-  timeoutMs: number;
-}) {
-  return Promise.race([
-    args.page
-      .render({
-        canvasContext: args.canvasContext as any,
-        viewport: args.viewport,
-      } as any)
-      .promise,
-    new Promise<never>((_, reject) => {
-      setTimeout(() => {
-        reject(new Error(`Page render timeout after ${args.timeoutMs}ms`));
-      }, args.timeoutMs);
-    }),
-  ]);
-}
-
-export async function renderPage(args: {
+export async function renderPageAtScaleOne(args: {
   pdf: PDFDocumentProxy;
   pageIndex: number;
-  targetWidth: number;
-  maxScale: number;
-  pageRenderTimeoutMs: number;
-  maxPagePixels: number;
 }): Promise<{
   canvas: Canvas;
   context: SKRSContext2D;
   width: number;
   height: number;
-  scale: number;
 }> {
   if (args.pageIndex < 0 || args.pageIndex >= args.pdf.numPages) {
     throw new Error(
@@ -108,48 +78,25 @@ export async function renderPage(args: {
   }
 
   const page = await args.pdf.getPage(args.pageIndex + 1);
-  const baseViewport = page.getViewport({ scale: 1 });
-  const basePixels = baseViewport.width * baseViewport.height;
-
-  if (basePixels > args.maxPagePixels) {
-    throw new Error(
-      `Rendered page exceeds max pixels even at scale=1: ${Math.ceil(baseViewport.width)}x${Math.ceil(baseViewport.height)} > ${args.maxPagePixels}`,
-    );
-  }
-
-  const requestedScale = args.targetWidth / baseViewport.width;
-  const maxScaleByPixels = Math.sqrt(args.maxPagePixels / basePixels);
-  const scale = Math.min(args.maxScale, Math.max(1, requestedScale), maxScaleByPixels);
-  const viewport = page.getViewport({ scale });
+  const viewport = page.getViewport({ scale: 1 });
 
   const width = Math.max(1, Math.ceil(viewport.width));
   const height = Math.max(1, Math.ceil(viewport.height));
 
-  if (width * height > args.maxPagePixels) {
-    throw new Error(
-      `Rendered page exceeds max pixels: ${width}x${height} > ${args.maxPagePixels}`,
-    );
-  }
-
   const canvas = createCanvas(width, height);
   const context = canvas.getContext("2d");
 
-  // Match client behavior where page backgrounds are treated as white.
-  context.fillStyle = "#ffffff";
-  context.fillRect(0, 0, width, height);
-
-  await renderPageWithTimeout({
-    page,
-    canvasContext: context,
-    viewport,
-    timeoutMs: args.pageRenderTimeoutMs,
-  });
+  await page
+    .render({
+      canvasContext: context as any,
+      viewport,
+    } as any)
+    .promise;
 
   return {
     canvas,
     context,
     width,
     height,
-    scale,
   };
 }
