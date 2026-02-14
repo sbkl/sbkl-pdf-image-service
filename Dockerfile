@@ -8,6 +8,6 @@ RUN npm install
 COPY . .
 
 ENV NODE_ENV=production
-EXPOSE 3000
+EXPOSE 8080
 
 CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/server.ts"]
