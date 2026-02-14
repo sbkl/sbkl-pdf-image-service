@@ -4,7 +4,7 @@ import { HTTPException } from "hono/http-exception";
 import { ZodError } from "zod";
 import { config } from "../config";
 import { normalizedBoxToPixelBox } from "../lib/crop";
-import { loadPdfFromUrl, renderPageAtScaleOne } from "../lib/pdf";
+import { loadPdfFromUrl, renderPage } from "../lib/pdf";
 import {
   processDocumentImagesRequestSchema,
   processDocumentImagesResponseSchema,
@@ -83,7 +83,12 @@ processDocumentImagesRouter.post("/process-document-images", async (c) => {
     for (const [pageIndex, images] of pageMap.entries()) {
       let renderedPage;
       try {
-        renderedPage = await renderPageAtScaleOne({ pdf, pageIndex });
+        renderedPage = await renderPage({
+          pdf,
+          pageIndex,
+          targetWidth: config.RENDER_TARGET_WIDTH,
+          maxScale: config.MAX_RENDER_SCALE,
+        });
       } catch (error) {
         const errorMessage = normalizeErrorMessage(error);
         for (const image of images) {
@@ -112,8 +117,17 @@ processDocumentImagesRouter.post("/process-document-images", async (c) => {
           const cropWidth = maxX - minX;
           const cropHeight = maxY - minY;
 
-          const outputCanvas = createCanvas(cropWidth, cropHeight);
+          const margin = config.CROP_MARGIN_PX;
+          const outputWidth = cropWidth + margin * 2;
+          const outputHeight = cropHeight + margin * 2;
+
+          const outputCanvas = createCanvas(outputWidth, outputHeight);
           const outputContext = outputCanvas.getContext("2d");
+
+          outputContext.imageSmoothingEnabled = true;
+          outputContext.imageSmoothingQuality = "high";
+          outputContext.fillStyle = "#ffffff";
+          outputContext.fillRect(0, 0, outputWidth, outputHeight);
 
           outputContext.drawImage(
             renderedPage.canvas,
@@ -121,8 +135,8 @@ processDocumentImagesRouter.post("/process-document-images", async (c) => {
             minY,
             cropWidth,
             cropHeight,
-            0,
-            0,
+            margin,
+            margin,
             cropWidth,
             cropHeight,
           );
@@ -133,8 +147,8 @@ processDocumentImagesRouter.post("/process-document-images", async (c) => {
             documentSectionImageId: image.documentSectionImageId,
             status: "success",
             mimeType: "image/png",
-            width: cropWidth,
-            height: cropHeight,
+            width: outputWidth,
+            height: outputHeight,
             bytesBase64: Buffer.from(bytes).toString("base64"),
             errorCode: null,
             errorMessage: null,

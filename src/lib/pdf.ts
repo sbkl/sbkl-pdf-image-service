@@ -62,14 +62,17 @@ export async function loadPdfFromUrl(args: {
   } as any).promise;
 }
 
-export async function renderPageAtScaleOne(args: {
+export async function renderPage(args: {
   pdf: PDFDocumentProxy;
   pageIndex: number;
+  targetWidth: number;
+  maxScale: number;
 }): Promise<{
   canvas: Canvas;
   context: SKRSContext2D;
   width: number;
   height: number;
+  scale: number;
 }> {
   if (args.pageIndex < 0 || args.pageIndex >= args.pdf.numPages) {
     throw new Error(
@@ -78,13 +81,21 @@ export async function renderPageAtScaleOne(args: {
   }
 
   const page = await args.pdf.getPage(args.pageIndex + 1);
-  const viewport = page.getViewport({ scale: 1 });
+  const baseViewport = page.getViewport({ scale: 1 });
+
+  const requestedScale = args.targetWidth / baseViewport.width;
+  const scale = Math.min(args.maxScale, Math.max(1, requestedScale));
+  const viewport = page.getViewport({ scale });
 
   const width = Math.max(1, Math.ceil(viewport.width));
   const height = Math.max(1, Math.ceil(viewport.height));
 
   const canvas = createCanvas(width, height);
   const context = canvas.getContext("2d");
+
+  // Match client behavior where page backgrounds are treated as white.
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, width, height);
 
   await page
     .render({
@@ -98,5 +109,6 @@ export async function renderPageAtScaleOne(args: {
     context,
     width,
     height,
+    scale,
   };
 }
