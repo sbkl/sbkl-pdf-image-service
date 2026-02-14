@@ -1,6 +1,6 @@
 # sbkl-pdf-image-service
 
-Bun + Hono service that receives a PDF URL and a batch of image crop requests, renders pages with `pdfjs-dist` + `@napi-rs/canvas`, and returns per-image PNG payloads.
+Node.js + Hono service that receives a PDF URL and a batch of image crop requests, renders pages with `pdfjs-dist` + `@napi-rs/canvas`, and returns per-image PNG payloads.
 
 ## Endpoints
 
@@ -61,16 +61,16 @@ Failures are returned per image with `status: "failed"`.
 ## Local Development
 
 ```bash
-bun install
+npm install
 cp .env.example .env
-bun run dev
+npm run dev
 ```
 
 ## Tests
 
 ```bash
-bun test
-bun run typecheck
+npm test
+npm run typecheck
 ```
 
 ## Railway

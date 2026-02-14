@@ -1,13 +1,13 @@
-FROM oven/bun:1.3.1
+FROM node:20-bookworm-slim
 
 WORKDIR /app
 
-COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile
+COPY package.json ./
+RUN npm install
 
 COPY . .
 
 ENV NODE_ENV=production
 EXPOSE 3000
 
-CMD ["bun", "run", "src/index.ts"]
+CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/server.ts"]

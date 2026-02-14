@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, mock } from "bun:test";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PDFDocument, rgb } from "pdf-lib";
 
 process.env.PROCESSOR_SECRET = "test-secret";
@@ -34,14 +34,14 @@ async function createFixturePdf() {
 }
 
 beforeEach(() => {
-  mock.restore();
+  vi.restoreAllMocks();
 });
 
 describe("POST /v1/process-document-images", () => {
   it("processes multi-page images and returns png payloads", async () => {
     const pdfBytes = await createFixturePdf();
 
-    globalThis.fetch = mock(async (input: string | URL | Request) => {
+    globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
       const url = String(input);
       if (url === "https://example.com/sample.pdf") {
         return new Response(pdfBytes, {
