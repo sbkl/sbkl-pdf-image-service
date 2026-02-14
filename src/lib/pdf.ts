@@ -2,10 +2,9 @@ import {
   createCanvas,
   DOMMatrix,
   ImageData,
-  Path2D,
   type Canvas,
-  type SKRSContext2D,
-} from "@napi-rs/canvas";
+  type CanvasRenderingContext2D,
+} from "canvas";
 import {
   getDocument,
   type PDFDocumentProxy,
@@ -15,7 +14,6 @@ import {
 const globalRef = globalThis as {
   DOMMatrix?: typeof DOMMatrix;
   ImageData?: typeof ImageData;
-  Path2D?: typeof Path2D;
 };
 
 if (!globalRef.DOMMatrix) {
@@ -23,9 +21,6 @@ if (!globalRef.DOMMatrix) {
 }
 if (!globalRef.ImageData) {
   globalRef.ImageData = ImageData;
-}
-if (!globalRef.Path2D) {
-  globalRef.Path2D = Path2D;
 }
 
 export async function loadPdfFromUrl(args: {
@@ -68,7 +63,7 @@ export async function loadPdfFromUrl(args: {
 
 function renderPageWithTimeout(args: {
   page: PDFPageProxy;
-  canvasContext: SKRSContext2D;
+  canvasContext: CanvasRenderingContext2D;
   viewport: ReturnType<PDFPageProxy["getViewport"]>;
   timeoutMs: number;
 }) {
@@ -94,7 +89,7 @@ export async function renderPageAtScaleOne(args: {
   maxPagePixels: number;
 }): Promise<{
   canvas: Canvas;
-  context: SKRSContext2D;
+  context: CanvasRenderingContext2D;
   width: number;
   height: number;
 }> {

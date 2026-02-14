@@ -1,6 +1,6 @@
 # sbkl-pdf-image-service
 
-Node.js + Hono service that receives a PDF URL and a batch of image crop requests, renders pages with `pdfjs-dist` + `@napi-rs/canvas`, and returns per-image PNG payloads.
+Node.js + Hono service that receives a PDF URL and a batch of image crop requests, renders pages with `pdfjs-dist` + `canvas`, and returns per-image PNG payloads.
 
 ## Endpoints
 
