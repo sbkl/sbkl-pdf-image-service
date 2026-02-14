@@ -6,7 +6,11 @@ import {
   type Canvas,
   type SKRSContext2D,
 } from "@napi-rs/canvas";
-import { getDocument, type PDFDocumentProxy } from "pdfjs-dist/legacy/build/pdf.mjs";
+import {
+  getDocument,
+  type PDFDocumentProxy,
+  type PDFPageProxy,
+} from "pdfjs-dist/legacy/build/pdf.mjs";
 
 const globalRef = globalThis as {
   DOMMatrix?: typeof DOMMatrix;
@@ -62,11 +66,34 @@ export async function loadPdfFromUrl(args: {
   } as any).promise;
 }
 
+export function renderPageWithTimeout(args: {
+  page: PDFPageProxy;
+  canvasContext: SKRSContext2D;
+  viewport: ReturnType<PDFPageProxy["getViewport"]>;
+  timeoutMs: number;
+}) {
+  return Promise.race([
+    args.page
+      .render({
+        canvasContext: args.canvasContext as any,
+        viewport: args.viewport,
+      } as any)
+      .promise,
+    new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        reject(new Error(`Page render timeout after ${args.timeoutMs}ms`));
+      }, args.timeoutMs);
+    }),
+  ]);
+}
+
 export async function renderPage(args: {
   pdf: PDFDocumentProxy;
   pageIndex: number;
   targetWidth: number;
   maxScale: number;
+  pageRenderTimeoutMs: number;
+  maxPagePixels: number;
 }): Promise<{
   canvas: Canvas;
   context: SKRSContext2D;
@@ -90,6 +117,12 @@ export async function renderPage(args: {
   const width = Math.max(1, Math.ceil(viewport.width));
   const height = Math.max(1, Math.ceil(viewport.height));
 
+  if (width * height > args.maxPagePixels) {
+    throw new Error(
+      `Rendered page exceeds max pixels: ${width}x${height} > ${args.maxPagePixels}`,
+    );
+  }
+
   const canvas = createCanvas(width, height);
   const context = canvas.getContext("2d");
 
@@ -97,12 +130,12 @@ export async function renderPage(args: {
   context.fillStyle = "#ffffff";
   context.fillRect(0, 0, width, height);
 
-  await page
-    .render({
-      canvasContext: context as any,
-      viewport,
-    } as any)
-    .promise;
+  await renderPageWithTimeout({
+    page,
+    canvasContext: context,
+    viewport,
+    timeoutMs: args.pageRenderTimeoutMs,
+  });
 
   return {
     canvas,

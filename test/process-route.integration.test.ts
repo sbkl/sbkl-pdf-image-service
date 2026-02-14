@@ -124,6 +124,6 @@ describe("POST /v1/process-document-images", () => {
       expect(pngBytes.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
     }
 
-    expect(failure[0]?.errorCode).toBe("CROP_FAILED");
+    expect(failure[0]?.errorCode).toBe("CROP_CONVERSION_FAILED");
   });
 });
