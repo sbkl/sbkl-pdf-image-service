@@ -36,6 +36,8 @@ processDocumentImagesRouterV2.post(
   async (ctx) => {
     const request = ctx.req.valid("json");
 
+    console.log("request", JSON.stringify(request, null, 2));
+
     if (request.images.length > config.MAX_IMAGES_PER_REQUEST) {
       throw new HTTPException(400, {
         message: `Too many images in request (${request.images.length} > ${config.MAX_IMAGES_PER_REQUEST})`,
@@ -71,11 +73,15 @@ processDocumentImagesRouterV2.post(
 
     const pdfBlob = await pdfResponse.blob();
 
+    console.log("pdfBlob", pdfBlob);
+
     const pdfArrayBuffer = await pdfBlob.arrayBuffer();
 
     const pdf = await getDocument({
       data: pdfArrayBuffer,
     }).promise;
+
+    console.log("pdf", pdf);
 
     const pageEntries = Array.from(pageMap.entries()).sort(
       (a, b) => a[0] - b[0],
