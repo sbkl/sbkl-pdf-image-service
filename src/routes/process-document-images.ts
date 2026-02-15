@@ -10,23 +10,7 @@ import { config } from "../config";
 import { HTTPException } from "hono/http-exception";
 import z from "zod";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
-import { createCanvas, DOMMatrix, Image, ImageData } from "canvas";
-
-const globalRef = globalThis as {
-  DOMMatrix?: typeof DOMMatrix;
-  Image?: typeof Image;
-  ImageData?: typeof ImageData;
-};
-
-if (!globalRef.DOMMatrix) {
-  globalRef.DOMMatrix = DOMMatrix;
-}
-if (!globalRef.Image) {
-  globalRef.Image = Image;
-}
-if (!globalRef.ImageData) {
-  globalRef.ImageData = ImageData;
-}
+import { createCanvas } from "@napi-rs/canvas";
 
 export const processDocumentImagesRouterV2 = new Hono();
 
