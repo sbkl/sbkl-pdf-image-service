@@ -1,46 +1,68 @@
+import { createCanvas } from "@napi-rs/canvas";
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
+import { HTTPException } from "hono/http-exception";
+import { ZodError } from "zod";
+import { config } from "../config";
+import { normalizedBoxToPixelBox } from "../lib/crop";
+import { loadPdfFromUrl, renderPageAtScaleOne } from "../lib/pdf";
+import { getPatchedContext2D } from "../lib/napi-canvas";
 import {
-  processDocumentImageSchema,
   processDocumentImagesRequestSchema,
   processDocumentImagesResponseSchema,
   type ProcessDocumentImagesResponse,
 } from "../schemas";
-import { config } from "../config";
-import { HTTPException } from "hono/http-exception";
-import z from "zod";
-import { createCanvas } from "@napi-rs/canvas";
-import { normalizedBoxToPixelBox } from "../lib/crop";
-import { loadPdfFromUrl } from "../lib/pdf";
-import { getPatchedContext2D } from "../lib/napi-canvas";
 
-export const processDocumentImagesRouterV2 = new Hono();
+const retryableStatusCodes = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
 
-processDocumentImagesRouterV2.post(
+type ImageFailureCode =
+  | "PDF_FETCH_FAILED"
+  | "PAGE_RENDER_FAILED"
+  | "REQUEST_DEADLINE_EXCEEDED"
+  | "CROP_TOO_LARGE"
+  | "CROP_FAILED";
+
+function normalizeErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+function toFailureResult(args: {
+  documentSectionImageId: string;
+  errorCode: ImageFailureCode;
+  errorMessage: string;
+}) {
+  return {
+    documentSectionImageId: args.documentSectionImageId,
+    status: "failed" as const,
+    mimeType: null,
+    width: null,
+    height: null,
+    bytesBase64: null,
+    errorCode: args.errorCode,
+    errorMessage: args.errorMessage,
+  };
+}
+
+export const processDocumentImagesRouter = new Hono();
+
+processDocumentImagesRouter.post(
   "/process-document-images",
   zValidator("json", processDocumentImagesRequestSchema),
-  async (ctx) => {
-    const request = ctx.req.valid("json");
+  async (c) => {
+    const secret = c.req.header("x-image-processor-secret");
+    if (!secret || secret !== config.PROCESSOR_SECRET) {
+      throw new HTTPException(401, { message: "Unauthorized" });
+    }
 
-    console.log("request", JSON.stringify(request, null, 2));
+    const request = c.req.valid("json");
 
     if (request.images.length > config.MAX_IMAGES_PER_REQUEST) {
       throw new HTTPException(400, {
         message: `Too many images in request (${request.images.length} > ${config.MAX_IMAGES_PER_REQUEST})`,
       });
-    }
-
-    const pageMap = new Map<
-      number,
-      z.infer<typeof processDocumentImageSchema>[]
-    >();
-    for (const image of request.images) {
-      const pageImages = pageMap.get(image.pageIndex);
-      if (pageImages) {
-        pageImages.push(image);
-        continue;
-      }
-      pageMap.set(image.pageIndex, [image]);
     }
 
     const startTime = Date.now();
@@ -51,158 +73,198 @@ processDocumentImagesRouterV2.post(
     const boundedTimeoutMs = (requestedTimeoutMs: number) =>
       Math.max(1, Math.min(requestedTimeoutMs, remainingBudgetMs()));
 
-    const pdfFetchTimeoutMs = boundedTimeoutMs(config.PDF_FETCH_TIMEOUT_MS);
-
-    const pdf = await loadPdfFromUrl({
-      url: request.file.url,
-      timeoutMs: pdfFetchTimeoutMs,
-      maxPdfBytes: config.MAX_PDF_BYTES,
-    });
-
-    const pageEntries = Array.from(pageMap.entries()).sort(
-      (a, b) => a[0] - b[0],
-    );
-
     const results: ProcessDocumentImagesResponse["results"] = [];
 
+    const pageMap = new Map<number, typeof request.images>();
+    for (const image of request.images) {
+      const pageImages = pageMap.get(image.pageIndex);
+      if (pageImages) {
+        pageImages.push(image);
+        continue;
+      }
+      pageMap.set(image.pageIndex, [image]);
+    }
+
+    let pdf;
+    const pdfFetchTimeoutMs = boundedTimeoutMs(config.PDF_FETCH_TIMEOUT_MS);
     try {
+      pdf = await loadPdfFromUrl({
+        url: request.file.url,
+        timeoutMs: pdfFetchTimeoutMs,
+        maxPdfBytes: config.MAX_PDF_BYTES,
+      });
+    } catch (error) {
+      const errorCode: ImageFailureCode = deadlineExceeded()
+        ? "REQUEST_DEADLINE_EXCEEDED"
+        : "PDF_FETCH_FAILED";
+      const errorMessage =
+        `stage=pdf_fetch elapsedMs=${elapsedMs()} timeoutMs=${pdfFetchTimeoutMs} ` +
+        `${normalizeErrorMessage(error)}`;
+      for (const image of request.images) {
+        results.push(
+          toFailureResult({
+            documentSectionImageId: image.documentSectionImageId,
+            errorCode,
+            errorMessage,
+          }),
+        );
+      }
+
+      return c.json(
+        processDocumentImagesResponseSchema.parse({
+          requestId: request.requestId,
+          results,
+        }),
+      );
+    }
+
+    try {
+      const pageEntries = Array.from(pageMap.entries()).sort(
+        (a, b) => a[0] - b[0],
+      );
+
       for (
         let pagePointer = 0;
         pagePointer < pageEntries.length;
         pagePointer += 1
       ) {
-        const [pageIndex, images] = z
-          .tuple([z.number(), z.array(processDocumentImageSchema)])
-          .parse(pageEntries[pagePointer]);
+        const [pageIndex, images] = pageEntries[pagePointer]!;
 
-        const page = await pdf.getPage(pageIndex + 1);
-
-        const unscaledViewport = page.getViewport({ scale: 1 });
-
-        const scale = (request.targetWidth ?? 1200) / unscaledViewport.width;
-
-        const viewport = page.getViewport({ scale });
-
-        const canvasWidth = Math.max(1, Math.ceil(viewport.width));
-        const canvasHeight = Math.max(1, Math.ceil(viewport.height));
-        let canvas = createCanvas(canvasWidth, canvasHeight);
-        let context = getPatchedContext2D(canvas);
-
-        console.log("pageNumber", page.pageNumber);
-
-        try {
-          await page.render({
-            canvasContext: context,
-            viewport,
-            intent: "display",
-          }).promise;
-
-          console.log("PAGE RENDERED");
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : String(error);
-          if (!message.includes("Image or Canvas expected")) {
-            throw error;
+        if (deadlineExceeded()) {
+          const errorMessage =
+            `stage=deadline_before_page elapsedMs=${elapsedMs()} ` +
+            `deadlineMs=${config.REQUEST_DEADLINE_MS} pageIndex=${pageIndex}`;
+          for (
+            let remainingPointer = pagePointer;
+            remainingPointer < pageEntries.length;
+            remainingPointer += 1
+          ) {
+            const [, remainingImages] = pageEntries[remainingPointer]!;
+            for (const image of remainingImages) {
+              results.push(
+                toFailureResult({
+                  documentSectionImageId: image.documentSectionImageId,
+                  errorCode: "REQUEST_DEADLINE_EXCEEDED",
+                  errorMessage,
+                }),
+              );
+            }
           }
+          break;
+        }
 
-          canvas = createCanvas(canvasWidth, canvasHeight);
-          context = getPatchedContext2D(canvas);
-          await page.render({
-            canvasContext: context,
-            viewport,
-            intent: "print",
-          }).promise;
-
-          console.log("PAGE RENDERED with print intent");
+        let renderedPage;
+        let pageRenderTimeoutMs = config.PAGE_RENDER_TIMEOUT_MS;
+        try {
+          pageRenderTimeoutMs = boundedTimeoutMs(config.PAGE_RENDER_TIMEOUT_MS);
+          renderedPage = await renderPageAtScaleOne({
+            pdf,
+            pageIndex,
+            pageRenderTimeoutMs,
+            maxPagePixels: config.MAX_PAGE_PIXELS,
+          });
+        } catch (error) {
+          const errorCode: ImageFailureCode = deadlineExceeded()
+            ? "REQUEST_DEADLINE_EXCEEDED"
+            : "PAGE_RENDER_FAILED";
+          const errorMessage =
+            `stage=page_render elapsedMs=${elapsedMs()} pageIndex=${pageIndex} ` +
+            `timeoutMs=${pageRenderTimeoutMs} ${normalizeErrorMessage(error)}`;
+          for (const image of images) {
+            results.push(
+              toFailureResult({
+                documentSectionImageId: image.documentSectionImageId,
+                errorCode,
+                errorMessage,
+              }),
+            );
+          }
+          continue;
         }
 
         for (const image of images) {
-          const [minY, minX, maxY, maxX] = normalizedBoxToPixelBox(
-            image.coordinates,
-            canvasWidth,
-            canvasHeight,
-          );
-
-          // Validate crop region
-          if (
-            minX < 0 ||
-            minY < 0 ||
-            maxX > canvas.width ||
-            maxY > canvas.height ||
-            minX >= maxX ||
-            minY >= maxY
-          ) {
-            console.error("Invalid crop region:", {
-              minX,
-              minY,
-              maxX,
-              maxY,
-              imageSize: { width: canvas.width, height: canvas.height },
-            });
-            throw new Error(
-              `Invalid crop region: minX(${minX},${minY}) maxX(${maxX},${maxY}) for image ${canvas.width}×${canvas.height}`,
+          if (deadlineExceeded()) {
+            results.push(
+              toFailureResult({
+                documentSectionImageId: image.documentSectionImageId,
+                errorCode: "REQUEST_DEADLINE_EXCEEDED",
+                errorMessage:
+                  `stage=deadline_during_page elapsedMs=${elapsedMs()} ` +
+                  `deadlineMs=${config.REQUEST_DEADLINE_MS} pageIndex=${pageIndex}`,
+              }),
             );
+            continue;
           }
 
-          const cropWidth = maxX - minX;
-          const cropHeight = maxY - minY;
+          try {
+            const [minY, minX, maxY, maxX] = normalizedBoxToPixelBox(
+              image.coordinates as [number, number, number, number],
+              renderedPage.width,
+              renderedPage.height,
+            );
 
-          // Add margin around the cropped image
-          const margin = 20; // pixels of margin on each side
-          const imageCanvasWidth = cropWidth + margin * 2;
-          const imageCanvasHeight = cropHeight + margin * 2;
+            const cropWidth = maxX - minX;
+            const cropHeight = maxY - minY;
+            const cropPixels = cropWidth * cropHeight;
+            if (cropPixels > config.MAX_CROP_PIXELS) {
+              results.push(
+                toFailureResult({
+                  documentSectionImageId: image.documentSectionImageId,
+                  errorCode: "CROP_TOO_LARGE",
+                  errorMessage:
+                    `stage=crop_validate elapsedMs=${elapsedMs()} pageIndex=${pageIndex} ` +
+                    `crop=${cropWidth}x${cropHeight} cropPixels=${cropPixels} ` +
+                    `maxCropPixels=${config.MAX_CROP_PIXELS}`,
+                }),
+              );
+              continue;
+            }
 
-          const imageCanvas = createCanvas(imageCanvasWidth, imageCanvasHeight);
+            const outputCanvas = createCanvas(cropWidth, cropHeight);
+            const outputContext = getPatchedContext2D(outputCanvas);
 
-          const imageContext = getPatchedContext2D(imageCanvas);
+            outputContext.drawImage(
+              renderedPage.canvas,
+              minX,
+              minY,
+              cropWidth,
+              cropHeight,
+              0,
+              0,
+              cropWidth,
+              cropHeight,
+            );
 
-          // Fill canvas with white background
-          imageContext.fillStyle = "white";
-          imageContext.fillRect(0, 0, imageCanvasWidth, imageCanvasHeight);
+            const bytes = outputCanvas.toBuffer("image/png");
 
-          console.log("drawing image", { minX, minY, maxX, maxY });
-
-          imageContext.drawImage(
-            canvas, // source canvas
-            minX, // source x
-            minY, // source y
-            cropWidth, // source width
-            cropHeight, // source height
-            margin, // destination x
-            margin, // destination y
-            cropWidth, // destination width
-            cropHeight, // destination height
-          );
-
-          console.log("Cropped region:", {
-            minX,
-            minY,
-            maxX,
-            maxY,
-            croppedSize: {
+            results.push({
+              documentSectionImageId: image.documentSectionImageId,
+              status: "success",
+              mimeType: "image/png",
               width: cropWidth,
               height: cropHeight,
-            },
-          });
-          const bytes = imageCanvas.toBuffer("image/png");
-
-          results.push({
-            documentSectionImageId: image.documentSectionImageId,
-            status: "success",
-            mimeType: "image/png",
-            width: imageCanvas.width,
-            height: imageCanvas.height,
-            bytesBase64: Buffer.from(bytes).toString("base64"),
-            errorCode: null,
-            errorMessage: null,
-          });
+              bytesBase64: Buffer.from(bytes).toString("base64"),
+              errorCode: null,
+              errorMessage: null,
+            });
+          } catch (error) {
+            results.push(
+              toFailureResult({
+                documentSectionImageId: image.documentSectionImageId,
+                errorCode: "CROP_FAILED",
+                errorMessage:
+                  `stage=crop_encode elapsedMs=${elapsedMs()} pageIndex=${pageIndex} ` +
+                  `${normalizeErrorMessage(error)}`,
+              }),
+            );
+          }
         }
       }
     } finally {
       await pdf.destroy();
     }
 
-    return ctx.json(
+    return c.json(
       processDocumentImagesResponseSchema.parse({
         requestId: request.requestId,
         results,
@@ -210,3 +272,35 @@ processDocumentImagesRouterV2.post(
     );
   },
 );
+
+processDocumentImagesRouter.onError((error, c) => {
+  if (error instanceof HTTPException) {
+    return c.json({ errorMessage: error.message }, error.status);
+  }
+
+  if (error instanceof ZodError) {
+    return c.json(
+      {
+        errorMessage: "Invalid request payload",
+        issues: error.issues,
+      },
+      400,
+    );
+  }
+
+  const message = normalizeErrorMessage(error);
+  console.error("process-document-images error", {
+    message,
+    stack: error instanceof Error ? error.stack : undefined,
+  });
+
+  const status =
+    error instanceof Error &&
+    retryableStatusCodes.has(
+      Number((error as Error & { status?: number }).status),
+    )
+      ? 503
+      : 500;
+
+  return c.json({ errorMessage: message }, status);
+});
