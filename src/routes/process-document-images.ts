@@ -81,8 +81,6 @@ processDocumentImagesRouterV2.post(
       data: pdfArrayBuffer,
     }).promise;
 
-    console.log("pdf", pdf);
-
     const pageEntries = Array.from(pageMap.entries()).sort(
       (a, b) => a[0] - b[0],
     );
@@ -111,12 +109,16 @@ processDocumentImagesRouterV2.post(
       let canvas = createCanvas(canvasWidth, canvasHeight);
       let context = canvas.getContext("2d");
 
+      console.log("pageNumber", page.pageNumber);
+
       try {
         await page.render({
           canvasContext: context,
           viewport,
           intent: "display",
         }).promise;
+
+        console.log("PAGE RENDERED");
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (!message.includes("Image or Canvas expected")) {
@@ -130,6 +132,8 @@ processDocumentImagesRouterV2.post(
           viewport,
           intent: "print",
         }).promise;
+
+        console.log("PAGE RENDERED with print intent");
       }
 
       for (const image of images) {
@@ -155,6 +159,7 @@ processDocumentImagesRouterV2.post(
             `Invalid crop region: minX(${minX},${minY}) maxX(${maxX},${maxY}) for image ${canvas.width}×${canvas.height}`,
           );
         }
+
         const cropWidth = maxX - minX;
         const cropHeight = maxY - minY;
 
@@ -170,6 +175,8 @@ processDocumentImagesRouterV2.post(
         // Fill canvas with white background
         imageContext.fillStyle = "white";
         imageContext.fillRect(0, 0, canvasWidth, canvasHeight);
+
+        console.log("drawing image", { minX, minY, maxX, maxY });
 
         imageContext.drawImage(
           canvas, // source canvas
