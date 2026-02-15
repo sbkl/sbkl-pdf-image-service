@@ -10,7 +10,23 @@ import { config } from "../config";
 import { HTTPException } from "hono/http-exception";
 import z from "zod";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
-import { createCanvas, Image } from "canvas";
+import { createCanvas, DOMMatrix, Image, ImageData } from "canvas";
+
+const globalRef = globalThis as {
+  DOMMatrix?: typeof DOMMatrix;
+  Image?: typeof Image;
+  ImageData?: typeof ImageData;
+};
+
+if (!globalRef.DOMMatrix) {
+  globalRef.DOMMatrix = DOMMatrix;
+}
+if (!globalRef.Image) {
+  globalRef.Image = Image;
+}
+if (!globalRef.ImageData) {
+  globalRef.ImageData = ImageData;
+}
 
 export const processDocumentImagesRouterV2 = new Hono();
 
@@ -57,7 +73,9 @@ processDocumentImagesRouterV2.post(
 
     const pdfArrayBuffer = await pdfBlob.arrayBuffer();
 
-    const pdf = await getDocument({ data: pdfArrayBuffer }).promise;
+    const pdf = await getDocument({
+      data: pdfArrayBuffer,
+    }).promise;
 
     const pageEntries = Array.from(pageMap.entries()).sort(
       (a, b) => a[0] - b[0],
@@ -82,44 +100,31 @@ processDocumentImagesRouterV2.post(
 
       const viewport = page.getViewport({ scale });
 
-      const canvas = createCanvas(viewport.width, viewport.height);
+      const canvasWidth = Math.max(1, Math.ceil(viewport.width));
+      const canvasHeight = Math.max(1, Math.ceil(viewport.height));
+      let canvas = createCanvas(canvasWidth, canvasHeight);
+      let context = canvas.getContext("2d");
 
-      const context = canvas.getContext("2d");
+      try {
+        await page.render({
+          canvasContext: context,
+          viewport,
+          intent: "display",
+        }).promise;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!message.includes("Image or Canvas expected")) {
+          throw error;
+        }
 
-      await page.render({
-        canvasContext: context,
-        viewport: viewport,
-      }).promise;
-
-      const dataURL = canvas.toDataURL("image/png");
-      console.log("dataURL", dataURL);
-
-      function dataURLToBlob(dataURL: string) {
-        const parts = dataURL.split(";base64,");
-        const contentType = parts[0]?.split(":")[1];
-        const bufferSrc = parts[1];
-
-        if (!bufferSrc) throw new Error("Invalid data URL");
-        const raw = Buffer.from(bufferSrc, "base64");
-        const blob = new Blob([raw], { type: contentType });
-        return blob;
+        canvas = createCanvas(canvasWidth, canvasHeight);
+        context = canvas.getContext("2d");
+        await page.render({
+          canvasContext: context,
+          viewport,
+          intent: "print",
+        }).promise;
       }
-
-      const pageBlob = dataURLToBlob(dataURL);
-
-      console.log("pageBlob", pageBlob);
-
-      const imageUrl = URL.createObjectURL(pageBlob);
-      const img = new Image();
-
-      // Load the image
-      await new Promise<void>((resolve, reject) => {
-        img.onload = () => resolve();
-        img.onerror = () => reject(new Error("Failed to load image"));
-        img.src = imageUrl;
-      });
-
-      URL.revokeObjectURL(imageUrl);
 
       for (const image of images) {
         const [minY, minX, maxY, maxX] = image.coordinates;
@@ -128,8 +133,8 @@ processDocumentImagesRouterV2.post(
         if (
           minX < 0 ||
           minY < 0 ||
-          maxX > img.width ||
-          maxY > img.height ||
+          maxX > canvas.width ||
+          maxY > canvas.height ||
           minX >= maxX ||
           minY >= maxY
         ) {
@@ -138,10 +143,10 @@ processDocumentImagesRouterV2.post(
             minY,
             maxX,
             maxY,
-            imageSize: { width: img.width, height: img.height },
+            imageSize: { width: canvas.width, height: canvas.height },
           });
           throw new Error(
-            `Invalid crop region: minX(${minX},${minY}) maxX(${maxX},${maxY}) for image ${img.width}×${img.height}`,
+            `Invalid crop region: minX(${minX},${minY}) maxX(${maxX},${maxY}) for image ${canvas.width}×${canvas.height}`,
           );
         }
         const cropWidth = maxX - minX;
@@ -166,8 +171,8 @@ processDocumentImagesRouterV2.post(
           minY, // source y
           cropWidth, // source width
           cropHeight, // source height
-          0, // destination x
-          0, // destination y
+          margin, // destination x
+          margin, // destination y
           cropWidth, // destination width
           cropHeight, // destination height
         );
@@ -182,40 +187,6 @@ processDocumentImagesRouterV2.post(
             height: cropHeight,
           },
         });
-        const imageDataURL = imageCanvas.toDataURL("image/png");
-        console.log("imageDataURL", imageDataURL);
-
-        const imageCanvasBlob = dataURLToBlob(imageDataURL);
-        console.log("imageCanvasBlob", imageCanvasBlob);
-
-        async function processFile(
-          file: File | Blob,
-          { throwError = false }: { throwError?: boolean } = {},
-        ) {
-          // 5 MB limit guard
-          if (file.size > 5 * 1024 * 1024 && throwError) {
-            throw new Error("File must be 5 MB or less");
-          }
-          const fileBuffer = await file.arrayBuffer();
-
-          const hashBuffer = await crypto.subtle.digest("SHA-256", fileBuffer);
-          const hashArray = Array.from(new Uint8Array(hashBuffer));
-          const sha256 = hashArray
-            .map((b) => b.toString(16).padStart(2, "0"))
-            .join("");
-
-          return {
-            fileBuffer,
-            sha256,
-            mimetype: file.type,
-            filename: file instanceof File ? file.name : "Unknown",
-          };
-        }
-
-        const { fileBuffer, mimetype } = await processFile(imageCanvasBlob, {
-          throwError: true,
-        });
-
         const bytes = imageCanvas.toBuffer("image/png");
 
         results.push({
