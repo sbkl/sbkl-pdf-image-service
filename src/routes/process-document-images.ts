@@ -11,6 +11,7 @@ import { HTTPException } from "hono/http-exception";
 import z from "zod";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { createCanvas } from "@napi-rs/canvas";
+import { normalizedBoxToPixelBox } from "../lib/crop";
 
 export const processDocumentImagesRouterV2 = new Hono();
 
@@ -121,7 +122,11 @@ processDocumentImagesRouterV2.post(
       }
 
       for (const image of images) {
-        const [minY, minX, maxY, maxX] = image.coordinates;
+        const [minY, minX, maxY, maxX] = normalizedBoxToPixelBox(
+          image.coordinates,
+          canvasWidth,
+          canvasHeight,
+        );
 
         // Validate crop region
         if (
@@ -149,16 +154,16 @@ processDocumentImagesRouterV2.post(
 
         // Add margin around the cropped image
         const margin = 20; // pixels of margin on each side
-        const canvasWidth = cropWidth + margin * 2;
-        const canvasHeight = cropHeight + margin * 2;
+        const imageCanvasWidth = cropWidth + margin * 2;
+        const imageCanvasHeight = cropHeight + margin * 2;
 
-        const imageCanvas = createCanvas(canvasWidth, canvasHeight);
+        const imageCanvas = createCanvas(imageCanvasWidth, imageCanvasHeight);
 
         const imageContext = imageCanvas.getContext("2d");
 
         // Fill canvas with white background
         imageContext.fillStyle = "white";
-        imageContext.fillRect(0, 0, canvasWidth, canvasHeight);
+        imageContext.fillRect(0, 0, imageCanvasWidth, imageCanvasHeight);
 
         console.log("drawing image", { minX, minY, maxX, maxY });
 
