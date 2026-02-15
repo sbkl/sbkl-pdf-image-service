@@ -19,6 +19,7 @@
     "@hono/node-server": "^1.19.9",
     "@hono/zod-validator": "^0.7.6",
     "@napi-rs/canvas": "^0.1.92",
+    "canvas": "^3.2.1",
     "hono": "^4.11.9",
     "pdfjs-dist": "^4.8.69",
     "tsx": "^4.21.0",
