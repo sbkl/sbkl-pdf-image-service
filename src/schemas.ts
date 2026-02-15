@@ -1,8 +1,11 @@
 import { z } from "zod";
 
-export const coordinatesSchema = z
-  .tuple([z.number().finite(), z.number().finite(), z.number().finite(), z.number().finite()])
-  .or(z.array(z.number().finite()).length(4));
+export const coordinatesSchema = z.tuple([
+  z.number().min(0).max(1000),
+  z.number().min(0).max(1000),
+  z.number().min(0).max(1000),
+  z.number().min(0).max(1000),
+]);
 
 export const processDocumentImageSchema = z.object({
   documentSectionImageId: z.string().min(1),
@@ -19,6 +22,7 @@ export const processDocumentImagesRequestSchema = z.object({
     mimeType: z.string().min(1),
   }),
   images: z.array(processDocumentImageSchema),
+  targetWidth: z.number().int().positive().optional(),
 });
 
 export const processDocumentImageSuccessSchema = z.object({

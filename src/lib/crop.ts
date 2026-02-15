@@ -39,9 +39,15 @@ export function normalizedBoxToPixelBox(
 
   const [minYNorm, minXNorm, maxYNorm, maxXNorm] = normalizeBoxCoordinates(box);
 
-  const minY = clampPixel(Math.floor((minYNorm / 1000) * pageHeight), pageHeight);
+  const minY = clampPixel(
+    Math.floor((minYNorm / 1000) * pageHeight),
+    pageHeight,
+  );
   const minX = clampPixel(Math.floor((minXNorm / 1000) * pageWidth), pageWidth);
-  const maxY = clampPixel(Math.ceil((maxYNorm / 1000) * pageHeight), pageHeight);
+  const maxY = clampPixel(
+    Math.ceil((maxYNorm / 1000) * pageHeight),
+    pageHeight,
+  );
   const maxX = clampPixel(Math.ceil((maxXNorm / 1000) * pageWidth), pageWidth);
 
   if (minY >= maxY || minX >= maxX) {

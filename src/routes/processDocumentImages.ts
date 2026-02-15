@@ -120,9 +120,15 @@ processDocumentImagesRouter.post("/process-document-images", async (c) => {
   }
 
   try {
-    const pageEntries = Array.from(pageMap.entries()).sort((a, b) => a[0] - b[0]);
+    const pageEntries = Array.from(pageMap.entries()).sort(
+      (a, b) => a[0] - b[0],
+    );
 
-    for (let pagePointer = 0; pagePointer < pageEntries.length; pagePointer += 1) {
+    for (
+      let pagePointer = 0;
+      pagePointer < pageEntries.length;
+      pagePointer += 1
+    ) {
       const [pageIndex, images] = pageEntries[pagePointer]!;
 
       if (deadlineExceeded()) {
@@ -290,7 +296,9 @@ processDocumentImagesRouter.onError((error, c) => {
 
   const status =
     error instanceof Error &&
-    retryableStatusCodes.has(Number((error as Error & { status?: number }).status))
+    retryableStatusCodes.has(
+      Number((error as Error & { status?: number }).status),
+    )
       ? 503
       : 500;
 
