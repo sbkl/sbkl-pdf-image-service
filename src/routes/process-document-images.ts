@@ -9,7 +9,7 @@ import {
 import { config } from "../config";
 import { HTTPException } from "hono/http-exception";
 import z from "zod";
-import { getDocument } from "pdfjs-dist";
+import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { createCanvas, Image } from "canvas";
 
 export const processDocumentImagesRouterV2 = new Hono();
