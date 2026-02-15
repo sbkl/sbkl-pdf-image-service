@@ -9,9 +9,10 @@ import {
 import { config } from "../config";
 import { HTTPException } from "hono/http-exception";
 import z from "zod";
-import { createCanvas } from "canvas";
+import { createCanvas } from "@napi-rs/canvas";
 import { normalizedBoxToPixelBox } from "../lib/crop";
 import { loadPdfFromUrl } from "../lib/pdf";
+import { getPatchedContext2D } from "../lib/napi-canvas";
 
 export const processDocumentImagesRouterV2 = new Hono();
 
@@ -85,7 +86,7 @@ processDocumentImagesRouterV2.post(
         const canvasWidth = Math.max(1, Math.ceil(viewport.width));
         const canvasHeight = Math.max(1, Math.ceil(viewport.height));
         let canvas = createCanvas(canvasWidth, canvasHeight);
-        let context = canvas.getContext("2d");
+        let context = getPatchedContext2D(canvas);
 
         console.log("pageNumber", page.pageNumber);
 
@@ -105,7 +106,7 @@ processDocumentImagesRouterV2.post(
           }
 
           canvas = createCanvas(canvasWidth, canvasHeight);
-          context = canvas.getContext("2d");
+          context = getPatchedContext2D(canvas);
           await page.render({
             canvasContext: context,
             viewport,
@@ -153,7 +154,7 @@ processDocumentImagesRouterV2.post(
 
           const imageCanvas = createCanvas(imageCanvasWidth, imageCanvasHeight);
 
-          const imageContext = imageCanvas.getContext("2d");
+          const imageContext = getPatchedContext2D(imageCanvas);
 
           // Fill canvas with white background
           imageContext.fillStyle = "white";

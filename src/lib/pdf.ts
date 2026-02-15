@@ -1,32 +1,20 @@
 import {
   createCanvas,
-  DOMMatrix,
-  Image,
-  ImageData,
   type Canvas,
-  type CanvasRenderingContext2D,
-} from "canvas";
+  type SKRSContext2D,
+} from "@napi-rs/canvas";
 import {
   getDocument,
   type PDFDocumentProxy,
   type PDFPageProxy,
 } from "pdfjs-dist/legacy/build/pdf.mjs";
+import {
+  getPatchedContext2D,
+  installNapiPdfjsGlobals,
+  NapiCanvasFactory,
+} from "./napi-canvas";
 
-const globalRef = globalThis as {
-  DOMMatrix?: typeof DOMMatrix;
-  Image?: typeof Image;
-  ImageData?: typeof ImageData;
-};
-
-if (!globalRef.DOMMatrix) {
-  globalRef.DOMMatrix = DOMMatrix;
-}
-if (!globalRef.Image) {
-  globalRef.Image = Image;
-}
-if (!globalRef.ImageData) {
-  globalRef.ImageData = ImageData;
-}
+installNapiPdfjsGlobals();
 
 export async function loadPdfFromUrl(args: {
   url: string;
@@ -60,7 +48,9 @@ export async function loadPdfFromUrl(args: {
   return await getDocument({
     data: pdfBytes,
     disableWorker: true,
+    CanvasFactory: NapiCanvasFactory,
     isEvalSupported: false,
+    isOffscreenCanvasSupported: false,
     useSystemFonts: false,
     stopAtErrors: true,
   } as any).promise;
@@ -68,7 +58,7 @@ export async function loadPdfFromUrl(args: {
 
 function renderPageWithTimeout(args: {
   page: PDFPageProxy;
-  canvasContext: CanvasRenderingContext2D;
+  canvasContext: SKRSContext2D;
   viewport: ReturnType<PDFPageProxy["getViewport"]>;
   timeoutMs: number;
   intent?: "display" | "print";
@@ -97,7 +87,7 @@ export async function renderPageAtScaleOne(args: {
   maxPagePixels: number;
 }): Promise<{
   canvas: Canvas;
-  context: CanvasRenderingContext2D;
+  context: SKRSContext2D;
   width: number;
   height: number;
 }> {
@@ -119,7 +109,7 @@ export async function renderPageAtScaleOne(args: {
   }
 
   const canvas = createCanvas(width, height);
-  let context = canvas.getContext("2d");
+  let context = getPatchedContext2D(canvas);
 
   try {
     await renderPageWithTimeout({
@@ -142,9 +132,9 @@ export async function renderPageAtScaleOne(args: {
       throw error;
     }
 
-    // Fallback for node-canvas drawImage type mismatches in some PDFs.
+    // Fallback for drawImage type mismatches in some PDFs.
     const retryCanvas = createCanvas(width, height);
-    context = retryCanvas.getContext("2d");
+    context = getPatchedContext2D(retryCanvas);
     await renderPageWithTimeout({
       page,
       canvasContext: context,
